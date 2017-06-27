@@ -33,6 +33,21 @@ class EdgeModel {
     this->items.push_back({footprint.clone(), contour, pose});
   }
 
+  public: void saveToFile(std::string name) {
+    std::ofstream ofs(name);
+
+    for (auto &fp : this->items) {
+      ofs << "pose: " << fp.pose.rot(0) << " " << fp.pose.rot(1) << " " << fp.pose.rot(2) << " "
+                      << fp.pose.trans(0) << " " << fp.pose.trans(1) << std::endl;
+
+      for (auto &pt : fp.contour) {
+        ofs << pt.x << " " << pt.y << std::endl;
+      }
+    }
+
+    ofs.close();
+  }
+
   public: std::vector<Footprint> items;
 };
 
@@ -243,8 +258,10 @@ int main() {
       rowRange(iy, iy+kv.img.rows));
   }
 
+  edge_model.saveToFile("/tmp/edge_model_monkey.txt");
+
   cv::imshow("Silhouettes", whole_image);
-  while ((cv::waitKey(100) % 255) != 27);
+  while ((cv::waitKey(100) & 255) != 27);
 
   return 0;
 }
