@@ -20,12 +20,20 @@ struct Pose {
   cv::Vec3f trans;
 };
 
+using Silhouette = std::vector<cv::Point2i>;
+
+struct Footprint {
+  cv::Mat img;
+  Silhouette contour;
+  Pose pose;
+};
+
 class EdgeModel {
-  public: void addFootprint(cv::Mat &footprint, const Pose &pose) {
-    this->items.push_back(std::make_pair(footprint.clone(), pose));
+  public: void addFootprint(cv::Mat &footprint, const Silhouette &contour, const Pose &pose) {
+    this->items.push_back({footprint.clone(), contour, pose});
   }
 
-  public: std::vector<std::pair<cv::Mat, Pose>> items;
+  public: std::vector<Footprint> items;
 };
 
 struct Camera {
@@ -100,7 +108,7 @@ Mesh readTrainingMesh(std::string _filename) {
   return {points, triangles};
 }
 
-cv::Mat getFootprint(Mesh mesh, Pose pose, Camera cam, int im_size) {
+Footprint getFootprint(Mesh mesh, Pose pose, Camera cam, int im_size) {
   // project points on a plane
   std::vector<cv::Point2f> points2d;
   cv::projectPoints(mesh.points, pose.rot, pose.trans, cam.matrix, cam.ks, points2d);
@@ -157,6 +165,13 @@ cv::Mat getFootprint(Mesh mesh, Pose pose, Camera cam, int im_size) {
   cv::copyMakeBorder(footprint, footprint, margin, margin, margin, margin,
     cv::BORDER_CONSTANT | cv::BORDER_ISOLATED, cv::Scalar(0));
 
+  cv::Mat tmp = footprint.clone();
+  std::vector<Silhouette> contours;
+  std::vector<cv::Vec4i> hierarchy;
+
+  cv::findContours(tmp, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
+  assert(contours.size() == 1);
+
   cv::Mat mkernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
   cv::morphologyEx(footprint, footprint, cv::MORPH_GRADIENT, mkernel,
     cv::Point(-1,-1), 1);
@@ -164,7 +179,7 @@ cv::Mat getFootprint(Mesh mesh, Pose pose, Camera cam, int im_size) {
   cv::imshow("footprint", footprint);
   cv::waitKey(100);
 
-  return footprint;
+  return {footprint, contours[0], pose};
 }
 
 EdgeModel getSampledFootprints(Mesh &mesh, Camera &cam, int im_size,
@@ -191,8 +206,8 @@ EdgeModel getSampledFootprints(Mesh &mesh, Camera &cam, int im_size,
       // avoid translation sampling for now
       Pose mesh_pose{rodrigues, {0,0,-mlen*3.f}};
 
-      cv::Mat footprint = getFootprint(mesh, mesh_pose, cam, im_size);
-      e_model.addFootprint(footprint, mesh_pose);
+      auto footprint = getFootprint(mesh, mesh_pose, cam, im_size);
+      e_model.addFootprint(footprint.img, footprint.contour, footprint.pose);
     }
   }
 
@@ -224,12 +239,12 @@ int main() {
     auto iy = (i / rot_samples)*seg_size;
     i++;
 
-    kv.first.copyTo(whole_image.colRange(ix, ix+kv.first.cols).
-      rowRange(iy, iy+kv.first.rows));
+    kv.img.copyTo(whole_image.colRange(ix, ix+kv.img.cols).
+      rowRange(iy, iy+kv.img.rows));
   }
 
   cv::imshow("Silhouettes", whole_image);
-  while (cv::waitKey(100)!=27);
+  while ((cv::waitKey(100) % 255) != 27);
 
   return 0;
 }
