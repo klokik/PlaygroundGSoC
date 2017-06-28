@@ -8,6 +8,9 @@
 #include <opencv2/opencv.hpp>
 
 
+constexpr auto storage_filename = "/tmp/edge_model_monkey.txt";
+constexpr int im_size = 64;
+
 using Triangle = std::vector<int>;
 
 struct Mesh {
@@ -21,6 +24,7 @@ struct Pose {
 };
 
 using Silhouette = std::vector<cv::Point2i>;
+using Silhouettef = std::vector<cv::Point2f>;
 
 struct Footprint {
   cv::Mat img;
@@ -30,7 +34,8 @@ struct Footprint {
 
 class EdgeModel {
   public: void addFootprint(cv::Mat &footprint, const Silhouette &contour, const Pose &pose) {
-    this->items.push_back({footprint.clone(), contour, pose});
+    if (contour.size() > 0)
+      this->items.push_back({footprint.clone(), contour, pose});
   }
 
   public: void saveToFile(std::string name) {
@@ -48,11 +53,59 @@ class EdgeModel {
     ofs.close();
   }
 
+  public: bool loadFromFile(std::string name) {
+    std::ifstream ifs(name);
+
+    // check if file exists
+    if (!ifs.good())
+      return false;
+
+    Silhouette contour;
+    Pose pose;
+
+    for (std::string line; std::getline(ifs, line);) {
+      std::istringstream iss(line);
+
+      if (line.find("pose") == 0) {
+        auto img = drawFootprint(contour);
+        this->addFootprint(img, contour, pose);
+        contour.clear();
+
+        iss >> pose.rot(0) >> pose.rot(1) >> pose.rot(2) >> pose.trans(0) >> pose.trans(1);
+      }
+      else {
+        cv::Point2i pt;
+        iss >> pt.x >> pt.y;
+
+        contour.push_back(pt);
+      }
+    }
+
+    auto img = drawFootprint(contour);
+    this->addFootprint(img, contour, pose);
+
+    return true;
+  }
+
+  protected: cv::Mat drawFootprint(Silhouette &contour) {
+    if (contour.size() == 0)
+      return cv::Mat();
+
+    cv::Rect b_rect = cv::boundingRect(contour);
+
+    cv::Mat result = cv::Mat::zeros(b_rect.height + 8, b_rect.width + 8, CV_8UC1);
+
+    for (auto &pt : contour)
+      cv::circle(result, pt, 1, cv::Scalar(255), -1);
+
+    return result;
+  }
+
   public: std::vector<Footprint> items;
 };
 
 struct Camera {
-  cv::Mat matrix = cv::Mat::zeros(3, 3, CV_32FC1);
+  cv::Mat matrix = cv::Mat::eye(3, 3, CV_32FC1);
   std::vector<float> ks;
 };
 
@@ -123,6 +176,24 @@ Mesh readTrainingMesh(std::string _filename) {
   return {points, triangles};
 }
 
+cv::Rect_<float> getBoundingRect(Silhouettef &sil) {
+  cv::Rect_<float> b_rect;
+
+  auto h_it = std::minmax_element(sil.begin(), sil.end(),
+    [](const cv::Point2f &a, const cv::Point2f &b) {
+      return a.x < b.x;});
+  auto v_it = std::minmax_element(sil.begin(), sil.end(),
+    [](const cv::Point2f &a, const cv::Point2f &b) {
+      return a.y < b.y;});
+
+  b_rect.x = h_it.first->x;
+  b_rect.y = v_it.first->y;
+  b_rect.width = h_it.second->x - b_rect.x;
+  b_rect.height = v_it.second->y - b_rect.y;
+
+  return b_rect;
+}
+
 Footprint getFootprint(Mesh mesh, Pose pose, Camera cam, int im_size) {
   // project points on a plane
   std::vector<cv::Point2f> points2d;
@@ -131,17 +202,7 @@ Footprint getFootprint(Mesh mesh, Pose pose, Camera cam, int im_size) {
   // find points2d bounding rect
   cv::Rect_<float> b_rect;
   // b_rect = cv::boundingRect2f(points2d); // available since 2.4.something
-  auto h_it = std::minmax_element(points2d.begin(), points2d.end(),
-    [](const cv::Point2f &a, const cv::Point2f &b) {
-      return a.x < b.x;});
-  auto v_it = std::minmax_element(points2d.begin(), points2d.end(),
-    [](const cv::Point2f &a, const cv::Point2f &b) {
-      return a.y < b.y;});
-
-  b_rect.x = h_it.first->x;
-  b_rect.y = v_it.first->y;
-  b_rect.width = h_it.second->x - b_rect.x;
-  b_rect.height = v_it.second->y - b_rect.y;
+  b_rect = getBoundingRect(points2d);
 
   auto larger_size = std::max(b_rect.width, b_rect.height);
 
@@ -230,20 +291,24 @@ EdgeModel getSampledFootprints(Mesh &mesh, Camera &cam, int im_size,
 }
 
 int main() {
-  Mesh test_mesh = readTrainingMesh("monkey.ply");
-
-  int im_size = 64;
   Camera camera;
-  camera.matrix.at<float>(0, 0) = 1;
-  camera.matrix.at<float>(1, 1) = 1;
-  camera.matrix.at<float>(2, 2) = 1;
-  camera.matrix.at<float>(0, 2) = 0;//im_size/2;
-  camera.matrix.at<float>(1, 2) = 0;//im_size/2;
+  // camera.matrix.at<float>(0, 0) = 1;
+  // camera.matrix.at<float>(1, 1) = 1;
+  // camera.matrix.at<float>(2, 2) = 1;
+  // camera.matrix.at<float>(0, 2) = 0;
+  // camera.matrix.at<float>(1, 2) = 0;
 
   int rot_samples = 10;
   int trans_samples = 1;
 
-  auto edge_model = getSampledFootprints(test_mesh, camera, im_size, rot_samples, trans_samples);
+  EdgeModel edge_model;
+
+  bool cached;
+
+  if (!(cached = edge_model.loadFromFile(storage_filename))) {
+    Mesh test_mesh = readTrainingMesh("monkey.ply");
+    edge_model = getSampledFootprints(test_mesh, camera, im_size, rot_samples, trans_samples);
+  }
 
   auto seg_size = (im_size+9);
   cv::Mat whole_image = cv::Mat::zeros(seg_size*rot_samples, seg_size*rot_samples, CV_8UC1);
@@ -258,7 +323,8 @@ int main() {
       rowRange(iy, iy+kv.img.rows));
   }
 
-  edge_model.saveToFile("/tmp/edge_model_monkey.txt");
+  if (!cached)
+    edge_model.saveToFile("/tmp/edge_model_monkey.txt");
 
   cv::imshow("Silhouettes", whole_image);
   while ((cv::waitKey(100) & 255) != 27);
