@@ -45,7 +45,9 @@ void silhouetteToPC(Silhouette &sil, pcl::PointCloud<pcl::PointXYZ> &pc) {
 void PCToSilhouette(pcl::PointCloud<pcl::PointXYZ> &pc, Silhouette &sil) {
   sil.clear();
 
-  for (size_t i = 0; i < sil.size(); ++i) {
+  assert(pc.height == 1);
+
+  for (size_t i = 0; i < pc.width; ++i) {
     sil.push_back(cv::Point2f(pc.points[i].x, pc.points[i].y));
   }
 }
@@ -78,6 +80,18 @@ Silhouette fitICP(Silhouette &test, Silhouette &model) {
 
 const auto pi = 3.1415926f;
 
+cv::Point2f operator*(cv::Mat &M, const cv::Point2f &pt) {
+  cv::Mat_<double> vec(3, 1);
+
+  vec(0, 0) = pt.x;
+  vec(1, 0) = pt.y;
+  vec(2, 0) = 1.f;
+
+  cv::Mat_<double> dst = M*vec;
+
+  return cv::Point2f(dst(0, 0), dst(1, 0));
+}
+
 Silhouette getTestSilhouette() {
   Silhouette result;
 
@@ -85,10 +99,14 @@ Silhouette getTestSilhouette() {
 
   int N = 100;
 
+  cv::Mat rot = cv::getRotationMatrix2D(cv::Point2f(), 30, 1);
+
   for (int i = 0; i < N; ++i) {
     float theta = 2*pi * i / N + pi/3;
-    cv::Point2f pt(std::cos(theta), std::sin(theta)*2);
-    pt *= 1+std::sin(theta)+std::sin(theta*10)*0.1f;
+    cv::Point2f pt(std::cos(theta)*2, std::sin(theta));
+    pt *= 1+std::sin(theta*10)*0.1f;
+
+    pt = rot*pt;
 
     result.push_back(pt*30 + offset);
   }
@@ -153,9 +171,9 @@ int main() {
   test_s = normalizeSilhouette(test_s);
   model_s = normalizeSilhouette(model_s);
 
-  fitICP(test_s, model_s);
+  auto fitted = fitICP(test_s, model_s);
 
-  Silhouette soup(test_s);
+  Silhouette soup(fitted);
   soup.insert(soup.end(), model_s.begin(), model_s.end());
 
   int scale = 240;
@@ -166,9 +184,9 @@ int main() {
   cv::Mat tnsm = cv::Mat::eye(t_box.height*scale, t_box.width*scale, CV_8UC1);
   drawSilhouette(tnsm, soup);
 
-  cv::imshow("Shifted, scaled", tnsm);
+  cv::imshow("Shifted, scaled, rotated", tnsm);
 
-  while (cv::waitKey(0) != 27);
+  while ((cv::waitKey(0) & 255) != 27);
 
   return 0;
 }
