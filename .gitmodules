@@ -1,3 +1,3 @@
 [submodule "libicp"]
 	path = libicp
-	url = https://github.com/symao/libicp.git
+	url = https://github.com/klokik/libicp.git
