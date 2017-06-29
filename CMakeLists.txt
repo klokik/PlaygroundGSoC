@@ -20,6 +20,9 @@ target_link_libraries(silhouette ${OpenCV_LIBS})
 add_executable(trans_segm FailedRegionGrabCut.cc)
 target_link_libraries(trans_segm ${OpenCV_LIBS})
 
-add_executable(procrustes Procrustes.cc)
+
+file(GLOB LIBICP_SRC_FILES "libicp/src/*.cpp")
+
+add_executable(procrustes Procrustes.cc ${LIBICP_SRC_FILES})
 target_link_libraries(procrustes ${OpenCV_LIBS} ${PCL_LIBRARIES})
 

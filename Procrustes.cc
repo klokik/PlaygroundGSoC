@@ -3,12 +3,23 @@
 
 #include <opencv2/opencv.hpp>
 
+#define USE_PCL 0
+
+#if USE_PCL
+
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 #include <pcl/registration/icp.h>
 
+#else
+
+#include "libicp/src/icpPointToPoint.h"
+
+#endif
 
 using Silhouette = std::vector<cv::Point2f>;
+
+cv::Point2f operator*(cv::Mat &M, const cv::Point2f &pt);
 
 Silhouette normalizeSilhouette(Silhouette &shape) {
   Silhouette result(shape);
@@ -30,6 +41,7 @@ Silhouette normalizeSilhouette(Silhouette &shape) {
   return result;
 }
 
+#if USE_PCL
 void silhouetteToPC(Silhouette &sil, pcl::PointCloud<pcl::PointXYZ> &pc) {
   pc.width = sil.size();
   pc.height = 1;
@@ -52,7 +64,7 @@ void PCToSilhouette(pcl::PointCloud<pcl::PointXYZ> &pc, Silhouette &sil) {
   }
 }
 
-Silhouette fitICP(Silhouette &test, Silhouette &model) {
+std::pair<Silhouette, float> fitICP(Silhouette &test, Silhouette &model) {
   pcl::PointCloud<pcl::PointXYZ>::Ptr cl_test(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::PointCloud<pcl::PointXYZ>::Ptr cl_model(new pcl::PointCloud<pcl::PointXYZ>);
 
@@ -69,14 +81,64 @@ Silhouette fitICP(Silhouette &test, Silhouette &model) {
 
   assert(icp.hasConverged());
 
-  std::cout << "Score: " << icp.getFitnessScore() << std::endl;
+  float score = icp.getFitnessScore();
+  std::cout << "Score: " << score << std::endl;
   std::cout << icp.getFinalTransformation() << std::endl;
 
   Silhouette result;
   PCToSilhouette(cl_result, result);
 
-  return result;
+  return {result, score};
 }
+
+#else
+
+std::pair<Silhouette, float> fitICP(Silhouette &test, Silhouette &model) {
+
+  std::vector<double> test_arr;
+  std::vector<double> model_arr;
+
+  for (auto &pt : test) {
+    test_arr.push_back(pt.x);
+    test_arr.push_back(pt.y);
+  }
+
+  for (auto &pt : model) {
+    model_arr.push_back(pt.x);
+    model_arr.push_back(pt.y);
+  }
+
+  int dim = 2; // 2D
+
+  Matrix rot = Matrix::eye(2); // libipc matrix
+  Matrix trans(2,1);           // libipc matrix
+
+  IcpPointToPoint icp(&test_arr[0], test.size(), dim);
+  float score = icp.fit(&model_arr[0], model.size(), rot, trans, -1);
+
+  std::cout << "Score: " << score << std::endl;
+
+  cv::Mat cv_trf(3, 3, CV_64FC1, cv::Scalar(0.f));
+  cv_trf.at<double>(0, 0) = rot.val[0][0];
+  cv_trf.at<double>(0, 1) = rot.val[1][0];
+  cv_trf.at<double>(1, 0) = rot.val[0][1];
+  cv_trf.at<double>(1, 1) = rot.val[1][1];
+
+  cv_trf.at<double>(0, 2) = 0; //trans.val[0][0];
+  cv_trf.at<double>(1, 2) = 0; //trans.val[1][0];
+  cv_trf.at<double>(2, 2) = 1.f;
+
+  std::cout << cv_trf << std::endl;
+
+  Silhouette result;
+  for (const auto &pt : test) {
+    cv::Point2f ptf = pt;
+    result.push_back(cv_trf * std::ref(ptf));
+  }
+
+  return {result, score};
+}
+#endif
 
 const auto pi = 3.1415926f;
 
@@ -171,9 +233,9 @@ int main() {
   test_s = normalizeSilhouette(test_s);
   model_s = normalizeSilhouette(model_s);
 
-  auto fitted = fitICP(test_s, model_s);
+  auto fitted__score = fitICP(test_s, model_s);
 
-  Silhouette soup(fitted);
+  Silhouette soup(fitted__score.first);
   soup.insert(soup.end(), model_s.begin(), model_s.end());
 
   int scale = 240;
