@@ -21,10 +21,10 @@ using Silhouette = std::vector<cv::Point2f>;
 
 cv::Point2f operator*(cv::Mat &M, const cv::Point2f &pt);
 
-Silhouette normalizeSilhouette(Silhouette &shape) {
+Silhouette normalizeSilhouette(const Silhouette &shape) {
   Silhouette result(shape);
 
-  cv::Point2f mean = std::accumulate(shape.begin(), shape.end(), cv::Point2f()) * (1.f / shape.size());
+  cv::Point2f mean = std::accumulate(shape.cbegin(), shape.cend(), cv::Point2f()) * (1.f / shape.size());
 
   float std_dev = 0;
 
@@ -217,6 +217,16 @@ cv::Rect_<float> getBoundingRect(Silhouette &sil) {
   return b_rect;
 }
 
+float getFitnessScore(Silhouette &a, Silhouette &b) {
+
+  Silhouette na = normalizeSilhouette(a);
+  Silhouette nb = normalizeSilhouette(b);
+
+  auto fitted__score = fitICP(na, nb);
+
+  return fitted__score.second;
+}
+
 int main() {
   cv::Mat test_sm = cv::Mat::zeros(256, 256, CV_8UC1);
   cv::Mat model_sm = cv::Mat::zeros(256, 256, CV_8UC1);
@@ -229,6 +239,8 @@ int main() {
 
   cv::imshow("Test Silhouette", test_sm);
   cv::imshow("Model Silhouette", model_sm);
+
+  std::cout << "Fitness score funct test: " << ::getFitnessScore(test_s, model_s) << std::endl;
 
   test_s = normalizeSilhouette(test_s);
   model_s = normalizeSilhouette(model_s);

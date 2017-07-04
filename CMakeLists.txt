@@ -17,7 +17,7 @@ add_definitions(${PCL_DEFINITIONS})
 add_executable(silhouette SilhouetteExtraction.cc)
 target_link_libraries(silhouette ${OpenCV_LIBS})
 
-add_executable(trans_segm FailedRegionGrabCut.cc)
+add_executable(trans_segm FailedRegionGrabCut.cc data.cc)
 target_link_libraries(trans_segm ${OpenCV_LIBS})
 
 
@@ -26,3 +26,5 @@ file(GLOB LIBICP_SRC_FILES "libicp/src/*.cpp")
 add_executable(procrustes Procrustes.cc ${LIBICP_SRC_FILES})
 target_link_libraries(procrustes ${OpenCV_LIBS} ${PCL_LIBRARIES})
 
+add_executable(transform_corresp Correspondance2d3dPose.cc)
+target_link_libraries(transform_corresp ${OpenCV_LIBS} ${PCL_LIBRARIES})

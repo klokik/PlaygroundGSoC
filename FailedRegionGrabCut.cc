@@ -8,8 +8,10 @@ extern int depth_width;
 extern float depth_data[];
 
 int main() {
-	// cv::Mat depth(depth_height, depth_width, CV_32FC1, &depth_data[0]);
-	cv::Mat depth = cv::imread("depth_2.png", cv::IMREAD_GRAYSCALE);
+	cv::Mat depth(depth_height, depth_width, CV_32FC1, &depth_data[0]);
+	depth.convertTo(depth, CV_16UC1, 65535./2);
+	cv::imwrite("/tmp/depth.tiff", depth);
+	// cv::Mat depth = cv::imread("depth_2.png", cv::IMREAD_GRAYSCALE);
 	depth.convertTo(depth, CV_32FC1, 1./255, 0);
 	// cv::Mat im_mask = cv::imread("registrationMask.png", cv::IMREAD_GRAYSCALE);
 	cv::Mat rgb = cv::imread("color_2.png");//"image.png");

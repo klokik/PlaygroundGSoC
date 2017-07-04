@@ -245,8 +245,17 @@ Footprint getFootprint(Mesh mesh, Pose pose, Camera cam, int im_size) {
   std::vector<Silhouette> contours;
   std::vector<cv::Vec4i> hierarchy;
 
-  cv::findContours(tmp, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
+  cv::findContours(tmp, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_TC89_L1);
   assert(contours.size() == 1);
+  if (contours[0].size() < 5) {
+    contours.clear();
+    cv::findContours(tmp, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE);
+
+    if (contours[0].size() < 5) {
+      contours.clear();
+      cv::findContours(tmp, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
+    }
+  }
 
   cv::Mat mkernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
   cv::morphologyEx(footprint, footprint, cv::MORPH_GRADIENT, mkernel,
@@ -306,7 +315,7 @@ int main() {
   bool cached;
 
   if (!(cached = edge_model.loadFromFile(storage_filename))) {
-    Mesh test_mesh = readTrainingMesh("monkey.ply");
+    Mesh test_mesh = readTrainingMesh("disc.ply");
     edge_model = getSampledFootprints(test_mesh, camera, im_size, rot_samples, trans_samples);
   }
 
