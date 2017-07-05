@@ -1,6 +1,6 @@
 
 #include <iostream>
-#include <ifstream>
+#include <fstream>
 #include <string>
 #include <sstream>
 #include <tuple>
@@ -31,12 +31,13 @@ struct Camera {
 
 struct Mesh {
   std::vector<cv::Point3f> points;
-  std::vector<cv::Point3f> normals;
+  std::vector<cv::Vec3f> normals;
   std::vector<Triangle> triangles;
 };
 
 Mesh readMesh(std::string _filename) {
   std::vector<cv::Point3f> points; 
+  std::vector<cv::Vec3f> normals; 
   std::vector<Triangle> triangles; 
 
   std::ifstream ifs(_filename);
@@ -88,15 +89,16 @@ Mesh readMesh(std::string _filename) {
   std::cout << "Vertices/Normals left: " << counts[PLYSection::VERTEX] << std::endl;
   std::cout << "Faces left: " << counts[PLYSection::FACE] << std::endl;
 
-  return {points, triangles};
+  return {points, normals, triangles};
 }
 
-cv::Mat mergeProcrustesTransform(cv::Vec2f procr_shift, float procr_scale, cv::Mat procr_rot) {
+cv::Mat mergeProcrustesTransform(cv::Vec2f procr_shift, float procr_scale, cv::Vec3f procr_rot) {
 	cv::Mat hom_2d_transform = cv::Mat::eye(3, 3, CV_32FC1);
 
-	cv::Mat rot = procr_rot;
-	cv::Mat scale = (cv::Mat(3, 3, CV_32FC1) << procr_scale, 0, 0, 0, procr_scale, 0, 0 , 0, 1);
-	cv::Mat shift = (cv::Mat(3, 3, CV_32FC1) << 0, 0, procr_shift(0), 0, 0, procr_shift(1), 0 , 0, 1);
+	cv::Mat rot;
+	cv::Rodrigues(procr_rot, rot);
+	cv::Mat scale = (cv::Mat_<float>(3, 3) << procr_scale, 0, 0, 0, procr_scale, 0, 0 , 0, 1);
+	cv::Mat shift = (cv::Mat_<float>(3, 3) << 0, 0, procr_shift(0), 0, 0, procr_shift(1), 0 , 0, 1);
 
 	hom_2d_transform = shift * scale * rot;
 
@@ -106,7 +108,7 @@ cv::Mat mergeProcrustesTransform(cv::Vec2f procr_shift, float procr_scale, cv::M
 // cv::Mat getHomSilhouetteTransform(Pose sil_pose, cv::Mat procr_trans) {	
 // }
 
-// cv::Vec2f centerOf(Sillhouettef &sil) {
+// cv::Vec2f centerOf(Silhouettef &sil) {
 // 	throw std::runtime_error("Not implemented");
 // }
 
@@ -114,7 +116,7 @@ float getPlaneDepth(Plane &plane, cv::Point2f uv) {
 	throw std::runtime_error("Not implemented");
 }
 
-std::Pair<cv::Mat, cv::Vec3f> map2dto3d(Camera &cam, Sillhouettef &sil, Pose &sil_pose, cv::Mat transf_2d, Plane &plane) {
+std::pair<cv::Mat, cv::Vec3f> map2dto3d(Camera &cam, Silhouettef &sil, Pose &sil_pose, cv::Mat transf_2d, Plane &plane) {
 	// cv::Mat similarity_trans = getHomSilhouetteTransform(sil_pose, transf_2d);
 	cv::Mat similarity_trans = transf_2d;
 
@@ -141,7 +143,7 @@ std::Pair<cv::Mat, cv::Vec3f> map2dto3d(Camera &cam, Sillhouettef &sil, Pose &si
 
 void drawMesh(cv::Mat &dst, Camera &cam, Mesh &mesh, cv::Mat cam_sp_transform) {
 	std::vector<cv::Point3f> vertice;
-	std::vector<cv::Point3f> normal;
+	std::vector<cv::Vec3f> normal;
 
 	vertice.reserve(mesh.points.size());
 	normal.reserve(mesh.normals.size());
@@ -149,24 +151,25 @@ void drawMesh(cv::Mat &dst, Camera &cam, Mesh &mesh, cv::Mat cam_sp_transform) {
 	assert(vertice.size() == normal.size());
 
 	for (const auto &vtx : mesh.points)
-		vertice.push_back(cam_sp_transform * vtx);
+		vertice.push_back(vtx);//cam_sp_transform * vtx);
 
 	for (const auto &nrm : mesh.normals)
-		normal.push_back(cam_sp_transform * nrm);
+		normal.push_back(nrm);//cam_sp_transform * nrm);
 
 	std::vector<cv::Point2f> vertice_2d;
 
 	// FIXME: shift and scale points to dst size
 	cv::Mat draw_cam_matrix = cv::Mat::eye(3, 3, CV_32FC1);
-	draw_cam_matrix.at<float>()
+	// draw_cam_matrix.at<float>()
 	cv::projectPoints(vertice, cv::Vec3f(), cv::Vec3f(), draw_cam_matrix, {}, vertice_2d);
 
 	cv::Vec3f light = cv::normalize(cv::Vec3f(-1, -1, -1));
 
 	for (const auto &tri : mesh.triangles) {
-		cv::Vec3f avg_normal = (normals[tri(0)] + normals[tri(1)] + normals[tri(2)]) / 3;
+		cv::Vec3f avg_normal = (normal[tri[0]] + normal[tri[1]] + normal[tri[2]]) / 3;
 
-		cv::Scalar color = cv::Scalar(255, 255, 255) * 0.8 * avg_normal.dot(light);
+		float brightness = avg_normal.dot(light);
+		cv::Scalar color = cv::Scalar(255*brightness, 255*brightness, 255*brightness);
 
     std::vector<cv::Point2i> poly{
         vertice_2d[tri[0]],
@@ -177,7 +180,7 @@ void drawMesh(cv::Mat &dst, Camera &cam, Mesh &mesh, cv::Mat cam_sp_transform) {
 	}
 }
 
-Pose getPoseEstimation()
+// Pose getPoseEstimation()
 
 int main() {
 	cv::Mat rgb = cv::imread("color_4.png");
@@ -192,7 +195,7 @@ int main() {
 	cv::Vec3f rot;
 	float scale;
 
-	std::tie(shift, scale, rot) = procrFit(sil, segment);
+	// std::tie(shift, scale, rot) = procrFit(sil, segment);
 	cv::Mat transform_2d = mergeProcrustesTransform(shift, scale, rot);
 
 	Camera cam;
