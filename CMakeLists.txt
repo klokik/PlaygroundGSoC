@@ -26,3 +26,6 @@ target_link_libraries(procrustes ${OpenCV_LIBS} ${PCL_LIBRARIES})
 
 add_executable(transform_corresp Correspondance2d3dPose.cc)
 target_link_libraries(transform_corresp ${OpenCV_LIBS} ${PCL_LIBRARIES})
+
+add_executable(icp2d3d ICP2d3d.cc)
+target_link_libraries(icp2d3d ${OpenCV_LIBS} ${PCL_LIBRARIES})
