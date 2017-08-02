@@ -14,6 +14,9 @@ using Silhouette = std::vector<cv::Point2f>;
 
 using Triangle = std::vector<int>;
 
+int scale = 6;
+
+
 struct Mesh {
   std::vector<cv::Point3f> points;
   std::vector<cv::Vec3f> normals;
@@ -186,7 +189,7 @@ Silhouette getTestSilhouette() {
   return result;
 }
 
-Silhouette getModelSilhouette() {
+/*Silhouette getModelSilhouette() {
   Silhouette result;
 
   cv::Point2f offset(128, 128);
@@ -219,11 +222,44 @@ Silhouette getModelSilhouette() {
   }
 
   return result;
+}*/
+
+cv::Mat init_pose = (cv::Mat_<double>(6, 1) << 0,0.3,0, 0.00,-0.06,-0.13);
+
+Silhouette getModelSilhouette() {
+  std::ifstream ifs("edges.txt");
+
+  size_t N {0};
+  ifs >> N;
+
+  Silhouette result;
+  for (size_t i = 0; i < N; ++i) {
+    cv::Point2f pt;
+    ifs >> pt.x >> pt.y;
+
+    result.push_back(pt);
+  }
+
+  cv::Mat params = cv::Mat::zeros(6, 1, CV_64FC1);
+  for (int i = 0; i < 6; ++i)
+    ifs >> params.at<double>(i);
+
+  ifs.close();
+
+  init_pose = params;
+  return result;
 }
 
-void drawSilhouette(cv::Mat &mat, Silhouette &sil) {
+void drawSilhouette(cv::Mat &mat, Silhouette &sil, size_t num1 = 0) {
+  size_t i {0};
+
   for (auto &ptf : sil) {
-    cv::circle(mat, ptf, 1, cv::Scalar(255));
+    cv::Scalar color = cv::Scalar(0, 0, 255);
+    if (i > num1)
+      color = cv::Scalar(0, 255, 0);
+    cv::circle(mat, ptf, 1, color);
+
+    ++i;
   }
 }
 
@@ -295,11 +331,12 @@ pcl::PointCloud<pcl::PointXYZ> transform(cv::Vec3f params, pcl::PointCloud<pcl::
 
 pcl::PointCloud<pcl::PointXYZ> projectSurfacePoints(cv::Mat &params, ::Mesh &mesh) {
   ::Silhouette points_2d;
-  cv::Mat eye = cv::Mat::eye(3, 3, CV_32FC1);
+  cv::Mat cam_mat = cv::Mat::eye(3, 3, CV_32FC1);
+  cam_mat = (cv::Mat_<double>(3, 3) << 570.3422241210938, 0.0, 319.5, 0.0, 570.3422241210938, 239.5, 0.0, 0.0, 1.0);
   cv::Vec3f rot(params.at<double>(0,0), params.at<double>(1,0), params.at<double>(2,0));
   cv::Vec3f trans(params.at<double>(3,0), params.at<double>(4,0), params.at<double>(5,0));
 
-  cv::projectPoints(mesh.points, rot, trans, eye, {}, points_2d);
+  cv::projectPoints(mesh.points, rot, trans, cam_mat, {}, points_2d);
 
   pcl::PointCloud<pcl::PointXYZ> result;
   silhouetteToPC(points_2d, result);
@@ -437,7 +474,7 @@ Silhouette fitICP2d(Silhouette &test, Silhouette &model) {
       for (auto &pt : soup)
         pt = (pt - t_box.tl())*scale;
 
-      cv::Mat tnsm = cv::Mat::eye(t_box.height*scale, t_box.width*scale, CV_8UC1);
+      cv::Mat tnsm = cv::Mat::eye(t_box.height*scale, t_box.width*scale, CV_8UC3);
       drawSilhouette(tnsm, soup);
 
       cv::imshow("2d-3d icp", tnsm);
@@ -458,9 +495,12 @@ Silhouette fitICP3d(::Mesh &mesh, Silhouette &model) {
   pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
   kdtree.setInputCloud(cl_model);
 
-  cv::Mat params = (cv::Mat_<double>(6, 1) << 0,0.3,0, 0.2,-0.1,-2);
+  cv::Mat params = init_pose;
 
   Silhouette result;
+  double last_err = 0;
+  size_t stall_counter = 0;
+
   for (int i = 0; ; ++i) {
     pcl::PointCloud<pcl::PointXYZ> projected_2d = projectSurfacePoints(params, mesh);
 
@@ -473,13 +513,13 @@ Silhouette fitICP3d(::Mesh &mesh, Silhouette &model) {
       Silhouette soup(result);
       soup.insert(soup.end(), model.begin(), model.end());
 
-      int scale = 240;
       auto t_box = getBoundingRect(soup);
+      std::cout << t_box << std::endl;
       for (auto &pt : soup)
         pt = (pt - t_box.tl())*scale;
 
-      cv::Mat tnsm = cv::Mat::eye(t_box.height*scale, t_box.width*scale, CV_8UC1);
-      drawSilhouette(tnsm, soup);
+      cv::Mat tnsm = cv::Mat::eye(t_box.height*scale, t_box.width*scale, CV_8UC3);
+      drawSilhouette(tnsm, soup, result.size());
 
       cv::imshow("2d-3d icp", tnsm);
 
@@ -495,11 +535,13 @@ Silhouette fitICP3d(::Mesh &mesh, Silhouette &model) {
         pcl::PointXYZ cpt = getNearestPoint(kdtree, pt);
 
         float residual = pcl::L2_Norm_SQR(pt.data, cpt.data, 3);
+        // std::cout << residual << " ";
         if (residual < 0.9) {
           sum += residual;
           ++num;
         }
       }
+      std::cout << num << "/" <<  transformed_cloud.width << std::endl;
       if (num == 0)
         return std::numeric_limits<double>::max();
       else
@@ -508,10 +550,25 @@ Silhouette fitICP3d(::Mesh &mesh, Silhouette &model) {
 
     double ref_err = getErr(params, mesh, kdtree);
 
+    double epsilon = 1e-5;
+    if (std::abs(last_err - ref_err) < epsilon) {
+      if (stall_counter == 5) {
+        std::cout << "Done in " << i << " iterations" << std::endl;
+        break;
+      }
+      stall_counter++;
+    }
+    else
+      stall_counter = 0;
+
+    last_err = ref_err;
+
     int dof = 6;
     double h = 1e-3;
-    float learning_rate = 500;
+    float learning_rate = 1e-4;
 
+#if 0
+    learning_rate = 0.2;
     for (int j = 0; j < dof; ++j) {
       cv::Mat offset = cv::Mat::zeros(params.size(), CV_64FC1);
       offset.at<double>(j) = h;
@@ -527,22 +584,69 @@ Silhouette fitICP3d(::Mesh &mesh, Silhouette &model) {
 
       params.at<double>(j) += -dEdPj*ref_err*learning_rate;
     }
+#else
+    {
+      cv::Mat jacobian = cv::Mat::zeros(projected_2d.width, dof, CV_64FC1);
+
+      cv::Mat residuals(projected_2d.width, 1, CV_64FC1);
+      for (int k = 0; k < projected_2d.width; ++k) {
+        auto pt_ref = projected_2d.points[k];
+        auto clpt_ref = getNearestPoint(kdtree, pt_ref);
+
+        double d1 = pcl::L2_Norm(pt_ref.data, clpt_ref.data, 3);
+
+        residuals.at<double>(k, 0) = d1;
+      }
+
+      for (int j = 0; j < dof; ++j) {
+        cv::Mat offset = cv::Mat::zeros(params.size(), CV_64FC1);
+        offset.at<double>(j) = h;
+
+        cv::Mat params_plus = params + offset;
+        cv::Mat params_minus = params - offset;
+
+        auto cloud_plus = projectSurfacePoints(params_plus, mesh);
+        auto cloud_minus = projectSurfacePoints(params_minus, mesh);
+
+        for (int k = 0; k < projected_2d.width; ++k) {
+          if (residuals.at<double>(k, 0) > 5)//0.7)
+            continue;
+
+          auto clpt_plus = getNearestPoint(kdtree, cloud_plus.points[k]);
+          auto clpt_minus = getNearestPoint(kdtree, cloud_minus.points[k]);
+
+          double d1 = pcl::L2_Norm_SQR(cloud_plus.points[k].data, clpt_plus.data, 3);
+          double d2 = pcl::L2_Norm_SQR(cloud_minus.points[k].data, clpt_minus.data, 3);
+
+          double dEk_dPj = (d1 - d2) / (2 * h);
+
+          jacobian.at<double>(k, j) = dEk_dPj;
+        }
+      }
+      jacobian = jacobian / cv::norm(jacobian, cv::NORM_INF);
+
+      if (cv::countNonZero(jacobian) == 0) {
+        std::cout << "Failed" << std::endl;
+        break;
+      }
+
+      cv::Mat delta_pose_mat;
+      cv::solve(jacobian, residuals, delta_pose_mat, cv::DECOMP_SVD);
+
+      params -= delta_pose_mat * learning_rate;
+    }
+#endif
 
     std::cout << "Pose: " << params << std::endl;
     std::cout << "Error: " << ref_err << std::endl;
-
-    if (ref_err < 1.53e-3) {
-      std::cout << "Done in " << i << " steps" << std::endl;
-      break;
-    }
   }
 
   return result;
 }
 
 int main() {
-  cv::Mat test_sm = cv::Mat::zeros(256, 256, CV_8UC1);
-  cv::Mat model_sm = cv::Mat::zeros(256, 256, CV_8UC1);
+  cv::Mat test_sm = cv::Mat::zeros(480, 640, CV_8UC3);
+  cv::Mat model_sm = cv::Mat::zeros(480, 640, CV_8UC3);
 
   // auto test_s = getTestSilhouette();
   auto model_s = getModelSilhouette();
@@ -554,22 +658,21 @@ int main() {
   cv::imshow("Model Silhouette", model_sm);
 
   // test_s = normalizeSilhouette(test_s);
-  model_s = normalizeSilhouette(model_s);
+  model_s = model_s;//normalizeSilhouette(model_s);
 
   // auto fitted = fitICP(test_s, model_s);
   // Silhouette fitted = fitICP2d(test_s, model_s);
-  ::Mesh mesh = readTrainingMesh("quad.ply");
+  ::Mesh mesh = readTrainingMesh("pokal_edge.ply");
   auto fitted = fitICP3d(mesh, model_s);
 
   Silhouette soup(fitted);
   soup.insert(soup.end(), model_s.begin(), model_s.end());
 
-  int scale = 240;
   auto t_box = getBoundingRect(soup);
   for (auto &pt : soup)
     pt = (pt - t_box.tl())*scale;
 
-  cv::Mat tnsm = cv::Mat::eye(t_box.height*scale, t_box.width*scale, CV_8UC1);
+  cv::Mat tnsm = cv::Mat::eye(t_box.height*scale, t_box.width*scale, CV_8UC3);
   drawSilhouette(tnsm, soup);
 
   cv::imshow("2d-3d", tnsm);
